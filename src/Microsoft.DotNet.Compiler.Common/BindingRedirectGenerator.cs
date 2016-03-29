@@ -34,7 +34,7 @@ namespace Microsoft.DotNet.Cli.Compiler.Common
 
         private static SHA1 Sha1 { get; } = SHA1.Create();
 
-        internal static XDocument GenerateBindingRedirects(this IEnumerable<LibraryExport> dependencies, XDocument document)
+        public static XDocument GenerateBindingRedirects(this IEnumerable<LibraryExport> dependencies, XDocument document)
         {
             var redirects = CollectRedirects(dependencies);
 
@@ -107,31 +107,39 @@ namespace Microsoft.DotNet.Cli.Compiler.Common
             return element;
         }
 
-        private static AssemblyRedirect[] CollectRedirects(IEnumerable<LibraryExport> dependencies)
+        internal static AssemblyRedirect[] CollectRedirects(IEnumerable<LibraryExport> dependencies)
         {
-            var allRuntimeAssemblies = dependencies
+            var runtimeAssemblies = dependencies
                 .SelectMany(d => d.RuntimeAssemblyGroups.GetDefaultAssets())
-                .Select(GetAssemblyInfo)
-                .ToArray();
+                .Select(GetAssemblyInfo);
 
-            var assemblyLookup = allRuntimeAssemblies.ToDictionary(r => r.Identity.ToLookupKey());
+            return CollectRedirects(runtimeAssemblies);
+        }
+
+        internal static AssemblyRedirect[] CollectRedirects(IEnumerable<AssemblyReferenceInfo> runtimeAssemblies)
+        {
+            var assemblyLookup = runtimeAssemblies.ToLookup(r => r.Identity.ToLookupKey());
 
             var redirectAssemblies = new HashSet<AssemblyRedirect>();
-            foreach (var assemblyReferenceInfo in allRuntimeAssemblies)
+            foreach (var assemblyReferenceInfo in assemblyLookup)
             {
-                foreach (var referenceIdentity in assemblyReferenceInfo.References)
+                // Using .First here is not exactly valid, but we don't know which one gets copied to
+                // output so we just use first
+                var references = assemblyReferenceInfo.First().References;
+                foreach (var referenceIdentity in references)
                 {
-                    AssemblyReferenceInfo targetAssemblyIdentity;
-                    if (assemblyLookup.TryGetValue(referenceIdentity.ToLookupKey(), out targetAssemblyIdentity)
-                        && targetAssemblyIdentity.Identity.Version != referenceIdentity.Version)
+                    foreach (var targetAssemblyIdentity in assemblyLookup[referenceIdentity.ToLookupKey()])
                     {
-                        if (targetAssemblyIdentity.Identity.PublicKeyToken != null)
+                        if (targetAssemblyIdentity.Identity.Version != referenceIdentity.Version)
                         {
-                            redirectAssemblies.Add(new AssemblyRedirect()
+                            if (targetAssemblyIdentity.Identity.PublicKeyToken != null)
                             {
-                                From = referenceIdentity,
-                                To = targetAssemblyIdentity.Identity
-                            });
+                                redirectAssemblies.Add(new AssemblyRedirect()
+                                {
+                                    From = referenceIdentity,
+                                    To = targetAssemblyIdentity.Identity
+                                });
+                            }
                         }
                     }
                 }
@@ -200,7 +208,7 @@ namespace Microsoft.DotNet.Cli.Compiler.Common
             return hex.ToString();
         }
 
-        private struct AssemblyRedirect
+        internal struct AssemblyRedirect
         {
             public AssemblyRedirect(AssemblyIdentity from, AssemblyIdentity to)
             {
@@ -213,7 +221,7 @@ namespace Microsoft.DotNet.Cli.Compiler.Common
             public AssemblyIdentity To { get; set; }
         }
 
-        private struct AssemblyIdentity
+        internal struct AssemblyIdentity
         {
             public AssemblyIdentity(string name, Version version, string culture, string publicKeyToken)
             {
@@ -239,7 +247,7 @@ namespace Microsoft.DotNet.Cli.Compiler.Common
             }
         }
 
-        private struct AssemblyReferenceInfo
+        internal struct AssemblyReferenceInfo
         {
             public AssemblyReferenceInfo(AssemblyIdentity identity, AssemblyIdentity[] references)
             {
